@@ -1,0 +1,5 @@
+# Mac-only launchers (local Wi-Fi server); not needed on the website
+*.command
+qr.html
+qr.swift
+.DS_Store

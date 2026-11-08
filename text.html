@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>香港咪錶 HK Parking Meters</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  main { padding: 14px 18px 40px; max-width: 1200px; margin: 0 auto; }
+  .street { background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+  .street > summary { padding: 10px 14px; cursor: pointer; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .street > summary .name { font-weight: 600; }
+  .street > summary .name span { font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .street > summary .mini { margin-left: auto; font-size: 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; background: var(--bg); position: sticky; top: 0; }
+  td.st { white-space: nowrap; font-weight: 600; }
+  td.en { color: var(--muted); }
+  .wrap { overflow-x: auto; }
+  .more { text-align: center; padding: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>香港咪錶泊車位實時狀況<small>Hong Kong Metered Parking – Live Status (Text)</small></h1>
+  <div class="controls">
+    <span class="controls" id="area"><select disabled><option>載入中 Loading…</option></select></span>
+    <select id="status">
+      <option value="">全部狀態 All</option>
+      <option value="V">空置 Vacant</option>
+      <option value="O">已佔用 Occupied</option>
+      <option value="X">暫停使用 Not in service</option>
+    </select>
+    <input id="q" type="search" placeholder="搜尋街道 / Search street">
+    <button id="refresh">重新整理 Refresh</button>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="meta"><span id="meta">載入中 Loading…</span> · <span class="nav"><a href="map.html">地圖版 Map view →</a></span></div>
+</header>
+<main id="list"></main>
+<script src="common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const PAGE = 150; // street groups rendered at a time
+let data = null, picker = null, groups = [], limit = PAGE;
+const open = new Set();
+
+function rowsHtml(arr) {
+  const st = $('status').value;
+  return arr.filter(s => !st || s.status === st)
+    .sort((a, b) => a.section.localeCompare(b.section) || a.id.localeCompare(b.id, undefined, { numeric: true }))
+    .map(s => `<tr>
+      <td>${escapeHtml(s.id)}</td>
+      <td class="st" style="color:${STATUS[s.status].color}">${STATUS[s.status].tc}<br><small>${STATUS[s.status].en}</small></td>
+      <td>${escapeHtml(addressTc(s))}</td>
+      <td class="en">${escapeHtml(addressEn(s))}</td>
+      <td>${VEHICLE[s.vehicle] || escapeHtml(s.vehicle)}</td>
+      <td>${maxText(s)}</td>
+      <td>${feeText(s)}</td>
+      <td>${escapeHtml(s.changed)}</td></tr>`).join('');
+}
+
+function tableHtml(arr) {
+  return `<div class="wrap"><table><thead><tr><th>車位編號<br>Space ID</th><th>狀態<br>Status</th><th>中文地址</th><th>English address</th>
+    <th>車輛類別<br>Vehicle</th><th>最長泊車<br>Max stay</th><th>收費<br>Fee</th><th>狀態更新<br>Status changed</th></tr></thead>
+    <tbody>${rowsHtml(arr)}</tbody></table></div>`;
+}
+
+function render() {
+  if (!data) return;
+  const area = picker.current();
+  const st = $('status').value;
+  const q = $('q').value.trim().toLowerCase();
+  const inArea = data.list.filter(area.match);
+  const shown = inArea.filter(s => (!st || s.status === st) &&
+    (!q || (s.street + s.section + s.streetTc + s.sectionTc).toLowerCase().includes(q)));
+
+  const c = countStatus(inArea);
+  $('stats').innerHTML = `<span class="stat"><b>${escapeHtml(area.label)}</b></span>` + ['V', 'O', 'X', 'U'].filter(k => k !== 'U' || c.U)
+    .map(k => `<span class="stat"><span class="dot" style="background:${STATUS[k].color}"></span>${STATUS[k].tc} ${STATUS[k].en} <b>${c[k]}</b></span>`).join('');
+
+  const byKey = new Map();
+  shown.forEach(s => {
+    const key = s.district + '|' + s.subDistrict + '|' + s.street;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(s);
+  });
+  groups = [...byKey.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  if (!groups.length) { $('list').innerHTML = '<p>沒有符合的車位 No matching spaces.</p>'; return; }
+
+  // Table rows are only built for open groups, so whole-HK lists stay fast
+  $('list').innerHTML = groups.slice(0, limit).map(([key, arr], i) => {
+    const s0 = arr[0], gc = countStatus(arr), isOpen = open.has(key) || (q && arr.length < 200);
+    return `<details class="street" data-i="${i}" ${isOpen ? 'open' : ''}>
+      <summary><span class="name">${escapeHtml(s0.streetTc)}<span>${escapeHtml(titleCase(s0.street))} · ${escapeHtml(s0.subDistrictTc)} ${escapeHtml(titleCase(s0.subDistrict))} · ${escapeHtml(s0.districtTc)}</span></span>
+      <span class="mini"><span class="dot" style="background:${STATUS.V.color}"></span>${gc.V} 空 &nbsp;
+      <span class="dot" style="background:${STATUS.O.color}"></span>${gc.O} 滿 &nbsp;
+      <span class="dot" style="background:${STATUS.X.color}"></span>${gc.X} 停用 · ${arr.length} 個車位 spaces</span></summary>
+      ${isOpen ? tableHtml(arr) : ''}</details>`;
+  }).join('') + (groups.length > limit
+    ? `<div class="more"><button id="more">顯示更多 Show more (${groups.length - limit})</button></div>` : '');
+
+  document.querySelectorAll('details.street').forEach(d => d.addEventListener('toggle', () => {
+    const [key, arr] = groups[d.dataset.i];
+    if (d.open) {
+      open.add(key);
+      if (!d.querySelector('table')) d.insertAdjacentHTML('beforeend', tableHtml(arr));
+    } else open.delete(key);
+  }));
+  if ($('more')) $('more').addEventListener('click', () => { limit += PAGE; render(); });
+}
+
+async function refresh() {
+  $('meta').textContent = '更新中 Updating…';
+  try {
+    data = await loadParking();
+    if (!picker) picker = areaPicker($('area'), data.list, () => { limit = PAGE; render(); });
+    $('meta').textContent = `最後更新 Last updated ${data.fetchedAt.toLocaleTimeString('zh-HK')} · 車位資料 ${data.dataDate} · 每5分鐘自動更新`;
+    render();
+  } catch (e) {
+    $('meta').innerHTML = `<span class="err">載入失敗 Failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+$('status').addEventListener('change', render);
+$('q').addEventListener('input', () => { limit = PAGE; render(); });
+$('refresh').addEventListener('click', refresh);
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>

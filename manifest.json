@@ -1,0 +1,9 @@
+{
+  "name": "香港咪錶 HK Parking Meters",
+  "short_name": "香港咪錶",
+  "start_url": "iphone.html",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#1a9850",
+  "icons": [{ "src": "icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }]
+}

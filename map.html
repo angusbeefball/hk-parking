@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>香港咪錶地圖 HK Meter Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="shared.css">
+<style>
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; }
+  #map { flex: 1; min-height: 300px; }
+  .legend { background: var(--card); color: var(--text); padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.8;
+    box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+  .leaflet-popup-content { font-size: 13px; line-height: 1.5; }
+  .leaflet-popup-content .s { font-weight: 700; }
+  .leaflet-popup-content .en { color: #667085; }
+</style>
+</head>
+<body>
+<header>
+  <h1>香港咪錶泊車位實時地圖<small>Hong Kong Metered Parking – Live Map</small></h1>
+  <div class="controls">
+    <span class="controls" id="area"><select disabled><option>載入中 Loading…</option></select></span>
+    <select id="status">
+      <option value="">全部狀態 All</option>
+      <option value="V">空置 Vacant</option>
+      <option value="O">已佔用 Occupied</option>
+      <option value="X">暫停使用 Not in service</option>
+    </select>
+    <button id="refresh">重新整理 Refresh</button>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="meta"><span id="meta">載入中 Loading…</span> · <span class="nav"><a href="text.html">文字版 Text view →</a></span></div>
+</header>
+<div id="map"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let data = null, lastArea = null, picker = null;
+
+const map = L.map('map', { preferCanvas: true }).setView([22.382, 114.272], 15);
+const attr = '<a href="https://api.portal.hkmapservice.gov.hk/disclaimer" target="_blank">&copy; 地政總署 Lands Department</a> · 資料 Data: 運輸署 Transport Department';
+L.tileLayer('https://mapapi.geodata.gov.hk/gs/api/v1.0.0/xyz/basemap/WGS84/{z}/{x}/{y}.png', { maxZoom: 20, minZoom: 10, attribution: attr }).addTo(map);
+L.tileLayer('https://mapapi.geodata.gov.hk/gs/api/v1.0.0/xyz/label/hk/tc/WGS84/{z}/{x}/{y}.png', { maxZoom: 20, minZoom: 10 }).addTo(map);
+const layer = L.layerGroup().addTo(map);
+
+const legend = L.control({ position: 'bottomright' });
+legend.onAdd = () => {
+  const d = L.DomUtil.create('div', 'legend');
+  d.innerHTML = ['V', 'O', 'X', 'U'].map(k => `<span class="dot" style="background:${STATUS[k].color}"></span>${STATUS[k].tc} ${STATUS[k].en}`).join('<br>');
+  return d;
+};
+legend.addTo(map);
+
+function popup(s) {
+  const st = STATUS[s.status];
+  return `<div class="s" style="color:${st.color}">${st.tc} ${st.en}</div>
+    車位 Space <b>${escapeHtml(s.id)}</b><br>
+    ${escapeHtml(addressTc(s))}<br>
+    <span class="en">${escapeHtml(addressEn(s))}</span><br>
+    ${VEHICLE[s.vehicle] || escapeHtml(s.vehicle)} · 最長 Max ${maxText(s)} · ${feeText(s)}<br>
+    <small>狀態更新 Changed: ${escapeHtml(s.changed || '—')}</small>`;
+}
+
+function render() {
+  if (!data) return;
+  const area = picker.current();
+  const st = $('status').value;
+  const inArea = data.list.filter(area.match);
+  const shown = inArea.filter(s => !st || s.status === st);
+
+  const c = countStatus(inArea);
+  $('stats').innerHTML = `<span class="stat"><b>${escapeHtml(area.label)}</b></span>` + ['V', 'O', 'X', 'U'].filter(k => k !== 'U' || c.U)
+    .map(k => `<span class="stat"><span class="dot" style="background:${STATUS[k].color}"></span>${STATUS[k].tc} ${STATUS[k].en} <b>${c[k]}</b></span>`).join('');
+
+  layer.clearLayers();
+  shown.forEach(s => {
+    if (!isFinite(s.lat) || !isFinite(s.lng)) return;
+    L.circleMarker([s.lat, s.lng], {
+      radius: 6, weight: 1, color: '#fff', fillColor: STATUS[s.status].color, fillOpacity: 0.95,
+    }).bindPopup(popup(s)).bindTooltip(`${s.streetTc} ${s.id} · ${STATUS[s.status].tc}`).addTo(layer);
+  });
+
+  // Re-fit only when the area changes, so auto-refresh doesn't move the map
+  if (lastArea !== area.key && inArea.length) {
+    map.fitBounds(L.latLngBounds(inArea.map(s => [s.lat, s.lng])), { padding: [30, 30], maxZoom: 17 });
+    lastArea = area.key;
+  }
+}
+
+async function refresh() {
+  $('meta').textContent = '更新中 Updating…';
+  try {
+    data = await loadParking();
+    if (!picker) picker = areaPicker($('area'), data.list, render);
+    $('meta').textContent = `最後更新 Last updated ${data.fetchedAt.toLocaleTimeString('zh-HK')} · 車位資料 ${data.dataDate} · 每5分鐘自動更新`;
+    render();
+  } catch (e) {
+    $('meta').innerHTML = `<span class="err">載入失敗 Failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+$('status').addEventListener('change', render);
+$('refresh').addEventListener('click', refresh);
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>

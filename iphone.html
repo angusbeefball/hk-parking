@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="香港咪錶">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1d2128" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<link rel="manifest" href="manifest.json">
+<title>香港咪錶 HK Parking Meters</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="shared.css">
+<style>
+  html, body { height: 100%; overflow: hidden; }
+  body { display: flex; flex-direction: column; font-size: 15px; -webkit-text-size-adjust: 100%; }
+  .top { background: var(--card); border-bottom: 1px solid var(--line); padding: calc(env(safe-area-inset-top) + 8px) 14px 8px; }
+  .top h1 { font-size: 17px; margin: 0 0 6px; display: flex; align-items: baseline; gap: 8px; }
+  .top h1 small { font-size: 12px; font-weight: 400; color: var(--muted); }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row select { flex: 1; min-width: 0; font-size: 15px; padding: 7px 8px; border-radius: 9px; }
+  .area select { flex: 1; font-size: 14px; padding: 7px 4px; }
+  .area select:disabled { opacity: .5; }
+  .areaName { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .toggle { white-space: nowrap; padding: 7px 10px; border-radius: 9px; font-size: 14px; }
+  .toggle.on { background: #1a9850; border-color: #1a9850; color: #fff; }
+  .counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+  .counts div { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 4px 6px; text-align: center; font-size: 11px; color: var(--muted); }
+  .counts b { display: block; font-size: 19px; font-variant-numeric: tabular-nums; }
+  .meta { font-size: 11px; color: var(--muted); margin-top: 5px; display: flex; justify-content: space-between; gap: 6px; }
+  .meta button { font-size: 11px; padding: 2px 8px; }
+
+  .views { flex: 1; position: relative; min-height: 0; }
+  .view { position: absolute; inset: 0; display: none; }
+  .view.active { display: block; }
+  #listView { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px 16px; }
+  #listView input[type=search] { width: 100%; font-size: 16px; padding: 8px 12px; border-radius: 10px; margin-bottom: 10px; background: var(--card); }
+  .street { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 9px; overflow: hidden; }
+  .street summary { list-style: none; padding: 10px 12px; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+  .street summary::-webkit-details-marker { display: none; }
+  .street .nm { flex: 1; min-width: 0; }
+  .street .nm b { display: block; font-size: 15px; }
+  .street .nm span { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vac { text-align: right; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .vac b { display: block; font-size: 18px; color: #1a9850; font-variant-numeric: tabular-nums; }
+  .vac b.zero { color: #d73027; }
+  .bar { height: 4px; display: flex; background: var(--line); }
+  .bar i { display: block; height: 100%; }
+  .sp { display: flex; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--line); align-items: flex-start; }
+  .pill { flex: none; width: 64px; text-align: center; border-radius: 7px; color: #fff; font-size: 12px; font-weight: 600; padding: 3px 0; line-height: 1.2; }
+  .pill small { display: block; font-weight: 400; font-size: 10px; opacity: .9; }
+  .sp .ad { flex: 1; min-width: 0; font-size: 13px; }
+  .sp .ad .en { color: var(--muted); font-size: 12px; }
+  .sp .ad .x { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .sp .lnk { flex: none; font-size: 12px; color: var(--accent); background: none; border: none; padding: 2px 0; }
+  .empty { text-align: center; color: var(--muted); padding: 30px 10px; }
+
+  #map { position: absolute; inset: 0; }
+  .leaflet-popup-content { font-size: 13px; line-height: 1.5; margin: 10px 12px; }
+  .legend { background: var(--card); color: var(--text); padding: 6px 8px; border-radius: 8px; font-size: 11px; line-height: 1.7; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+  .locate { background: var(--card); color: var(--text); width: 36px; height: 36px; border-radius: 8px; font-size: 18px; border: none; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+
+  .tabs { display: flex; background: var(--card); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  .tabs button { flex: 1; border: none; border-radius: 0; background: none; padding: 8px 0 7px; font-size: 11px; color: var(--muted); }
+  .tabs button span { display: block; font-size: 20px; line-height: 1.1; }
+  .tabs button.active { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>香港咪錶<small>HK Parking Meters</small></h1>
+  <div class="row area" id="area"><select disabled><option>載入中 Loading…</option></select></div>
+  <div class="row" style="margin-top:6px"><span id="areaName" class="areaName"></span><button id="vacOnly" class="toggle">只看空位 Vacant only</button></div>
+  <div class="counts" id="counts"></div>
+  <div class="meta"><span id="meta">載入中 Loading…</span><button id="refresh">↻ 更新</button></div>
+</div>
+
+<div class="views">
+  <div class="view active" id="listView">
+    <input id="q" type="search" placeholder="搜尋街道 Search street">
+    <div id="list"></div>
+  </div>
+  <div class="view" id="mapView"><div id="map"></div></div>
+</div>
+
+<nav class="tabs">
+  <button data-view="listView" class="active"><span>☰</span>列表 List</button>
+  <button data-view="mapView"><span>⌖</span>地圖 Map</button>
+</nav>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let data = null, vacOnly = false, lastArea = null, map = null, layer = null, picker = null;
+const open = new Set();
+
+function pref(k, v) {
+  try { if (v === undefined) return localStorage.getItem('sk_' + k); localStorage.setItem('sk_' + k, v); } catch (e) { return null; }
+}
+
+vacOnly = pref('vac') === '1';
+$('vacOnly').classList.toggle('on', vacOnly);
+
+// Apple Maps on iPhone / iPad / Mac, Google Maps everywhere else (Android)
+const APPLE = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
+function mapsLink(s) {
+  return APPLE
+    ? `https://maps.apple.com/?daddr=${s.lat},${s.lng}&dirflg=d`
+    : `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}&travelmode=driving`;
+}
+
+function filtered() {
+  const area = picker.current();
+  const inArea = data.list.filter(area.match);
+  return { area, inArea, shown: vacOnly ? inArea.filter(s => s.status === 'V') : inArea };
+}
+
+function renderCounts(inArea) {
+  const c = countStatus(inArea);
+  $('counts').innerHTML = ['V', 'O', 'X'].map(k =>
+    `<div><b style="color:${STATUS[k].color}">${c[k]}</b>${STATUS[k].tc} ${STATUS[k].en}</div>`).join('');
+}
+
+function spacesHtml(arr) {
+  return arr
+    .filter(s => !vacOnly || s.status === 'V')
+    .sort((a, b) => a.section.localeCompare(b.section) || a.id.localeCompare(b.id, undefined, { numeric: true }))
+    .map(s => `<div class="sp">
+      <div class="pill" style="background:${STATUS[s.status].color}">${STATUS[s.status].tc}<small>${STATUS[s.status].en}</small></div>
+      <div class="ad">${escapeHtml(s.id)} · ${escapeHtml(addressTc(s))}<div class="en">${escapeHtml(addressEn(s))}</div>
+        <div class="x">${VEHICLE[s.vehicle] || escapeHtml(s.vehicle)} · ${maxText(s)} · ${feeText(s)}</div></div>
+      <a class="lnk" href="${mapsLink(s)}" target="_blank">導航<br>Go</a></div>`).join('');
+}
+
+const PAGE = 80; // street cards rendered at a time
+let entries = [], limit = PAGE;
+
+function renderList({ inArea }) {
+  const q = $('q').value.trim().toLowerCase();
+  const groups = new Map();
+  inArea.filter(s => !q || (s.street + s.section + s.streetTc + s.sectionTc).toLowerCase().includes(q)).forEach(s => {
+    const key = s.district + '|' + s.subDistrict + '|' + s.street;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  });
+  entries = [...groups.entries()].map(([key, arr]) => ({ key, arr, c: countStatus(arr) }));
+  if (vacOnly) entries = entries.filter(e => e.c.V > 0);
+  entries.sort((a, b) => b.c.V - a.c.V || a.key.localeCompare(b.key));
+  if (!entries.length) { $('list').innerHTML = '<div class="empty">沒有符合的車位<br>No matching spaces</div>'; return; }
+
+  // Space rows are only built when a card is opened, so whole-HK lists stay fast on the phone
+  $('list').innerHTML = entries.slice(0, limit).map(({ key, arr, c }, i) => {
+    const s0 = arr[0], n = arr.length, isOpen = open.has(key);
+    return `<details class="street" data-i="${i}" ${isOpen ? 'open' : ''}>
+      <summary><div class="nm"><b>${escapeHtml(s0.streetTc)}</b><span>${escapeHtml(titleCase(s0.street))} · ${escapeHtml(s0.subDistrictTc)} · ${escapeHtml(s0.districtTc)}</span></div>
+      <div class="vac"><b class="${c.V ? '' : 'zero'}">${c.V}</b>空位 / ${n}</div></summary>
+      <div class="bar"><i style="width:${c.V / n * 100}%;background:${STATUS.V.color}"></i><i style="width:${c.O / n * 100}%;background:${STATUS.O.color}"></i><i style="width:${c.X / n * 100}%;background:${STATUS.X.color}"></i></div>
+      ${isOpen ? spacesHtml(arr) : ''}</details>`;
+  }).join('') + (entries.length > limit
+    ? `<div class="empty"><button id="more">顯示更多 Show more (${entries.length - limit})</button></div>` : '');
+  document.querySelectorAll('details.street').forEach(d => d.addEventListener('toggle', () => {
+    const { key, arr } = entries[d.dataset.i];
+    if (d.open) {
+      open.add(key);
+      if (!d.querySelector('.sp')) d.insertAdjacentHTML('beforeend', spacesHtml(arr));
+    } else open.delete(key);
+  }));
+  if ($('more')) $('more').addEventListener('click', () => { limit += PAGE; renderList(filtered()); });
+}
+
+function initMap() {
+  map = L.map('map', { preferCanvas: true, zoomControl: false }).setView([22.382, 114.272], 15);
+  L.tileLayer('https://mapapi.geodata.gov.hk/gs/api/v1.0.0/xyz/basemap/WGS84/{z}/{x}/{y}.png', {
+    maxZoom: 20, minZoom: 10, attribution: '&copy; 地政總署 Lands Dept · 運輸署 TD',
+  }).addTo(map);
+  L.tileLayer('https://mapapi.geodata.gov.hk/gs/api/v1.0.0/xyz/label/hk/tc/WGS84/{z}/{x}/{y}.png', { maxZoom: 20, minZoom: 10 }).addTo(map);
+  layer = L.layerGroup().addTo(map);
+
+  const legend = L.control({ position: 'bottomleft' });
+  legend.onAdd = () => {
+    const d = L.DomUtil.create('div', 'legend');
+    d.innerHTML = ['V', 'O', 'X'].map(k => `<span class="dot" style="background:${STATUS[k].color}"></span>${STATUS[k].tc} ${STATUS[k].en}`).join('<br>');
+    return d;
+  };
+  legend.addTo(map);
+
+  // Geolocation only works on https (or localhost), so the button appears only there
+  if (window.isSecureContext && navigator.geolocation) {
+    const loc = L.control({ position: 'topright' });
+    let me = null;
+    loc.onAdd = () => {
+      const b = L.DomUtil.create('button', 'locate');
+      b.textContent = '◎';
+      b.title = '我的位置 My location';
+      L.DomEvent.on(b, 'click', e => {
+        L.DomEvent.stop(e);
+        navigator.geolocation.getCurrentPosition(p => {
+          const ll = [p.coords.latitude, p.coords.longitude];
+          if (me) me.setLatLng(ll); else me = L.circleMarker(ll, { radius: 8, color: '#fff', weight: 2, fillColor: '#0b6bcb', fillOpacity: 1 }).addTo(map);
+          map.setView(ll, 17);
+        }, () => alert('無法取得位置 Location unavailable'));
+      });
+      return b;
+    };
+    loc.addTo(map);
+  }
+}
+
+function renderMap({ area, inArea, shown }) {
+  if (!map) return;
+  layer.clearLayers();
+  shown.forEach(s => {
+    if (!isFinite(s.lat) || !isFinite(s.lng)) return;
+    const st = STATUS[s.status];
+    L.circleMarker([s.lat, s.lng], { radius: 8, weight: 1.5, color: '#fff', fillColor: st.color, fillOpacity: 0.95 })
+      .bindPopup(`<b style="color:${st.color}">${st.tc} ${st.en}</b> · ${escapeHtml(s.id)}<br>
+        ${escapeHtml(addressTc(s))}<br><span style="color:#667085">${escapeHtml(addressEn(s))}</span><br>
+        ${VEHICLE[s.vehicle] || ''} · ${maxText(s)} · ${feeText(s)}<br>
+        <a href="${mapsLink(s)}" target="_blank">在地圖導航 Directions ›</a>`)
+      .addTo(layer);
+  });
+  if (lastArea !== area.key && inArea.length) {
+    map.fitBounds(L.latLngBounds(inArea.map(s => [s.lat, s.lng])), { padding: [20, 20], maxZoom: 17 });
+    lastArea = area.key;
+  }
+}
+
+function render() {
+  if (!data) return;
+  const f = filtered();
+  $('areaName').textContent = f.area.label;
+  renderCounts(f.inArea);
+  renderList(f);
+  renderMap(f);
+}
+
+async function refresh() {
+  $('meta').textContent = '更新中 Updating…';
+  try {
+    data = await loadParking();
+    if (!picker) picker = areaPicker($('area'), data.list, () => { lastScroll(); render(); });
+    $('meta').textContent = `更新於 Updated ${data.fetchedAt.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })} · 每5分鐘自動更新`;
+    render();
+  } catch (e) {
+    $('meta').innerHTML = `<span class="err">載入失敗 Failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('active', x === b));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === b.dataset.view));
+  if (b.dataset.view === 'mapView') {
+    if (!map) { initMap(); if (data) renderMap(filtered()); }
+    else map.invalidateSize();
+  }
+}));
+const lastScroll = () => { $('listView').scrollTop = 0; limit = PAGE; };
+$('vacOnly').addEventListener('click', () => {
+  vacOnly = !vacOnly; pref('vac', vacOnly ? '1' : '0');
+  $('vacOnly').classList.toggle('on', vacOnly); render();
+});
+$('q').addEventListener('input', () => { limit = PAGE; render(); });
+$('refresh').addEventListener('click', refresh);
+// iOS pauses timers in the background; refresh when the app comes back
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && data && Date.now() - data.fetchedAt > 60000) refresh();
+});
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>
